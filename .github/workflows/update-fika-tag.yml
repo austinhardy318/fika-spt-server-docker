@@ -26,46 +26,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check tag state
-        id: check
+      - name: Create immutable release tag
+        id: tag
         run: |
           SPT_VERSION=$(grep "^ARG SPT_VERSION=" Dockerfile | head -n1 | cut -d'=' -f2 | cut -d'-' -f1)
           FIKA_VERSION=$(grep "^ARG FIKA_VERSION=" Dockerfile | head -n1 | cut -d'=' -f2)
-          echo "spt_version=${SPT_VERSION}" >> $GITHUB_OUTPUT
-          echo "fika_version=${FIKA_VERSION}" >> $GITHUB_OUTPUT
+          BASE="${SPT_VERSION}-fika${FIKA_VERSION}"
 
-          HEAD_SHA=$(git rev-parse HEAD)
-
-          if git rev-parse "refs/tags/${SPT_VERSION}" >/dev/null 2>&1; then
-            TAG_SHA=$(git rev-parse "refs/tags/${SPT_VERSION}^{commit}")
-            if [ "$TAG_SHA" = "$HEAD_SHA" ]; then
-              echo "Tag ${SPT_VERSION} already points to HEAD, nothing to do"
-              echo "action=none" >> $GITHUB_OUTPUT
-            else
-              echo "Tag ${SPT_VERSION} exists but points to ${TAG_SHA}, moving to HEAD"
-              echo "action=move" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "Tag ${SPT_VERSION} does not exist, creating at HEAD"
-            echo "action=create" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Update SPT version tag
-        if: steps.check.outputs.action != 'none'
-        run: |
-          SPT_VERSION="${{ steps.check.outputs.spt_version }}"
-          FIKA_VERSION="${{ steps.check.outputs.fika_version }}"
-          ACTION="${{ steps.check.outputs.action }}"
+          # Next docker revision for this SPT+Fika pair (packaging-only bumps use the same base)
+          N=1
+          while git rev-parse "refs/tags/${BASE}.${N}" >/dev/null 2>&1; do
+            N=$((N + 1))
+          done
+          TAG="${BASE}.${N}"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          if [ "$ACTION" = "move" ]; then
-            git tag -d "${SPT_VERSION}"
-            git push origin ":refs/tags/${SPT_VERSION}"
-          fi
+          git tag -a "${TAG}" HEAD -m "SPT ${SPT_VERSION} with Fika ${FIKA_VERSION} (docker rev ${N})"
+          git push origin "${TAG}"
 
-          git tag -a "${SPT_VERSION}" HEAD -m "SPT ${SPT_VERSION} with Fika ${FIKA_VERSION}"
-          git push origin "${SPT_VERSION}"
-
-          echo "Tag ${SPT_VERSION} ${ACTION}d at HEAD (Fika ${FIKA_VERSION})"
+          echo "Created immutable tag ${TAG}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"

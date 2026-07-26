@@ -3,7 +3,8 @@ name: Create Draft Release
 on:
   push:
     tags:
-      - '*.*.*'  # Trigger on semver tags like 4.0.14
+      # Immutable release tags: <spt>-fika<fika>.<docker-rev> e.g. 4.0.13-fika2.3.2.1
+      - '*.*.*-fika*.*.*.*'
 
 jobs:
   create-release:
@@ -24,19 +25,28 @@ jobs:
           # Get SPT and Fika versions from Dockerfile
           SPT_VERSION=$(grep "^ARG SPT_VERSION=" Dockerfile | head -n1 | cut -d'=' -f2)
           FIKA_VERSION=$(grep "^ARG FIKA_VERSION=" Dockerfile | head -n1 | cut -d'=' -f2)
+          SPT_SHORT=$(echo "${SPT_VERSION}" | cut -d'-' -f1)
 
           echo "spt=${SPT_VERSION}" >> $GITHUB_OUTPUT
+          echo "spt_short=${SPT_SHORT}" >> $GITHUB_OUTPUT
           echo "fika=${FIKA_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Generate release notes
         id: notes
         run: |
-          # Extract SPT version number (without build info)
-          SPT_VERSION=$(echo "${{ steps.version.outputs.spt }}" | cut -d'-' -f1)
+          SPT_VERSION="${{ steps.version.outputs.spt_short }}"
+          IMAGE="ghcr.io/${{ github.repository }}"
 
           cat > release_notes.md <<EOF
+          ### Pull (pin — recommended)
           \`\`\`
-          docker pull ghcr.io/${{ github.repository }}:${{ steps.version.outputs.tag }}
+          docker pull ${IMAGE}:${{ steps.version.outputs.tag }}
+          \`\`\`
+
+          ### Floating tags (also published)
+          \`\`\`
+          docker pull ${IMAGE}:${SPT_VERSION}
+          docker pull ${IMAGE}:latest
           \`\`\`
 
           | SPT Server | Fika Server  |
