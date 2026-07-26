@@ -114,14 +114,17 @@ download_new_urls() {
         mkdir -p $tmp_downloaded_dir
         echo "  Finished compiling url download list. Starting downloads" | tee -a $download_unzip_install_logs_filepath
 
-        aria2c -q --content-disposition-default-utf8 true \
+        if aria2c -q --content-disposition-default-utf8 true \
         --input-file=$new_urls_to_download_filepath \
         --dir=$tmp_downloaded_dir \
         --log-level=notice \
-        --log=$download_unzip_install_logs_filepath
-
-        # Once all downloads are complete, append the downloaded files list to the master list for .
-        cat $new_urls_to_download_filepath >> $mod_urls_downloaded_filepath
+        --log=$download_unzip_install_logs_filepath; then
+            # Only mark URLs as downloaded after aria2 succeeds
+            cat $new_urls_to_download_filepath >> $mod_urls_downloaded_filepath
+        else
+            echo "  ERROR: One or more mod downloads failed. URLs were NOT marked as downloaded." | tee -a $download_unzip_install_logs_filepath
+            return 1
+        fi
     else
         # Local variable to send the same message to stdout with a double space indentation and to the logs without
         local message="No new urls. Nothing to download"
