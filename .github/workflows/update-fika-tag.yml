@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
 
     steps:
       - name: Checkout repository
@@ -48,3 +50,26 @@ jobs:
 
           echo "Created immutable tag ${TAG}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+  # GITHUB_TOKEN tag pushes do not trigger on.push workflows — call publish directly.
+  publish:
+    needs: update-tag
+    if: needs.update-tag.outputs.tag != ''
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      tag: ${{ needs.update-tag.outputs.tag }}
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+  create-release:
+    needs: [update-tag, publish]
+    if: needs.update-tag.outputs.tag != ''
+    uses: ./.github/workflows/create-release.yml
+    with:
+      tag: ${{ needs.update-tag.outputs.tag }}
+    secrets: inherit
+    permissions:
+      contents: write
