@@ -5,6 +5,18 @@ on:
     tags:
       # Immutable release tags: <spt>-fika<fika>.<docker-rev> e.g. 4.0.13-fika2.3.2.1
       - '*.*.*-fika*.*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git tag to create a draft release for'
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Git tag to create a draft release for'
+        required: true
+        type: string
 
 jobs:
   create-release:
@@ -13,23 +25,34 @@ jobs:
       contents: write
 
     steps:
+      - name: Resolve tag
+        id: release
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
 
       - name: Extract version info
         id: version
         run: |
-          TAG_NAME="${GITHUB_REF#refs/tags/}"
-          echo "tag=${TAG_NAME}" >> $GITHUB_OUTPUT
+          TAG_NAME="${{ steps.release.outputs.tag }}"
+          echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
 
           # Get SPT and Fika versions from Dockerfile
           SPT_VERSION=$(grep "^ARG SPT_VERSION=" Dockerfile | head -n1 | cut -d'=' -f2)
           FIKA_VERSION=$(grep "^ARG FIKA_VERSION=" Dockerfile | head -n1 | cut -d'=' -f2)
           SPT_SHORT=$(echo "${SPT_VERSION}" | cut -d'-' -f1)
 
-          echo "spt=${SPT_VERSION}" >> $GITHUB_OUTPUT
-          echo "spt_short=${SPT_SHORT}" >> $GITHUB_OUTPUT
-          echo "fika=${FIKA_VERSION}" >> $GITHUB_OUTPUT
+          echo "spt=${SPT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "spt_short=${SPT_SHORT}" >> "$GITHUB_OUTPUT"
+          echo "fika=${FIKA_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Generate release notes
         id: notes
@@ -57,6 +80,7 @@ jobs:
       - name: Create draft release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
           draft: true
           name: "Release ${{ steps.version.outputs.tag }}"
           body_path: release_notes.md
