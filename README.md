@@ -45,7 +45,7 @@ That's it! The image has everything else you need to run an SPT Server, with Fik
 
 
 # 🪄 Features
-- 📦 Prepackaged images versioned by SPT version e.g. `fika-spt-server-docker:4.0.13` for SPT `4.0.13`. Images are hosted in ghcr and come prebuilt with a working SPT server binary, and the latest compatible Fika servermod is downloaded and installed on container startup if enabled.
+- 📦 Prepackaged images with dual tags: pin an immutable build (`4.0.13-fika2.3.2.1`) or float on SPT (`4.0.13`) / `latest`. Images are hosted in ghcr and come prebuilt with a working SPT server binary, and the latest compatible Fika servermod is downloaded and installed on container startup if enabled.
 - 🏗️ Multi-architecture support: Native builds for both AMD64 and ARM64 (Raspberry Pi, Apple Silicon, etc.)
 - ♻️ Reuse an existing installation of SPT! Just mount your existing SPT server folder
 - 💾 Automatic profile backups by default! Profiles are copied to a backup folder every day at 00:00 UTC
@@ -54,11 +54,28 @@ That's it! The image has everything else you need to run an SPT Server, with Fik
 - ⬇️ Optionally auto download and install additional mods
 
 # 🥡 Releases
-The image build is triggered off release tags and hosted on ghcr
+Image builds are triggered by immutable git tags shaped as:
+
+`<spt>-fika<fika>.<docker-rev>` → e.g. `4.0.13-fika2.3.2.1`
+
+Each release publishes **three** registry tags:
+
+| Tag | Purpose |
+| --- | --- |
+| `4.0.13-fika2.3.2.1` | Immutable pin (recommended for prod) |
+| `4.0.13` | Floating — newest docker packaging for that SPT |
+| `latest` | Floating — newest release overall |
+
 ```
-docker pull ghcr.io/zhliau/fika-spt-server-docker:4.0.13
+# Pin (recommended)
+docker pull ghcr.io/austinhardy318/fika-spt-server-docker:4.0.13-fika2.3.2.1
+
+# Or float on SPT / latest
+docker pull ghcr.io/austinhardy318/fika-spt-server-docker:4.0.13
+docker pull ghcr.io/austinhardy318/fika-spt-server-docker:latest
 ```
-Check the pane on the right for the different version tags available, if you don't want to use the latest SPT release.
+
+Bump `<docker-rev>` when only packaging/entrypoint changes; reset it to `1` when SPT or Fika changes. Check the package versions pane for available tags.
 
 # 🛫 Running
 ### docker
