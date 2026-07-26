@@ -6,11 +6,11 @@ RUN apt update && apt install -y --no-install-recommends \
     ca-certificates \
     unzip \
     7zip \
-    vim \
     cron \
     exiftool \
     jq \
-    dos2unix
+    dos2unix \
+    && rm -rf /var/lib/apt/lists/*
 
 ARG SPT_VERSION=4.0.13-40087-2891fd4
 ARG FIKA_VERSION=2.3.2
@@ -18,7 +18,7 @@ ENV SPT_VERSION=$SPT_VERSION
 ENV FIKA_VERSION=$FIKA_VERSION
 
 WORKDIR /opt/build
-RUN curl -sL "https://spt-releases.modd.in/SPT-${SPT_VERSION}.7z" -o spt.7z
+RUN curl -fSL "https://spt-releases.modd.in/SPT-${SPT_VERSION}.7z" -o spt.7z
 RUN 7zz x spt.7z
 
 COPY entrypoint.sh /usr/bin/entrypoint
@@ -30,4 +30,6 @@ RUN dos2unix /usr/bin/entrypoint /usr/bin/backup /usr/bin/download_unzip_install
 
 # Docker desktop doesn't allow you to configure port mappings unless this is present
 EXPOSE 6969
+HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 \
+  CMD curl -fk https://127.0.0.1:6969/launcher/server/version || exit 1
 ENTRYPOINT ["/usr/bin/entrypoint"]

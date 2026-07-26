@@ -74,21 +74,30 @@ fi
 
 take_ownership=${TAKE_OWNERSHIP:-true}
 change_permissions=${CHANGE_PERMISSIONS:-true}
-enable_profile_backup=${ENABLE_PROFILE_BACKUP:-true}
+# Accept common typo ENABLE_PROFILE_BACKUPS as an alias
+enable_profile_backup=${ENABLE_PROFILE_BACKUP:-${ENABLE_PROFILE_BACKUPS:-true}}
 
 num_headless_profiles=${NUM_HEADLESS_PROFILES:+"$NUM_HEADLESS_PROFILES"}
 
 install_other_mods=${INSTALL_OTHER_MODS:-false}
 
+# True when /opt/server is a bind/volume mount (not just the image rootfs).
+is_server_dir_mounted() {
+    local target
+    target=$(findmnt -n -o TARGET --target "$mounted_dir" 2>/dev/null || true)
+    # Unmounted paths resolve to "/"; a real volume/bind shows its own mountpoint.
+    [[ -n "$target" && "$target" != "/" ]]
+}
+
 enforce_spt_4_structure() {
     # detect SPT 4 files in serverfiles root, if exists move everything into SPT/ subdirectory
-    if [[ -f $mounted_dir/$spt_binary ]]; then
+    if [[ -f "$mounted_dir/$spt_binary" ]]; then
         echo "Enforcing SPT 4.0 structure"
-        mkdir -p $spt_dir
-        for item in $mounted_dir/*; do
+        mkdir -p "$spt_dir"
+        for item in "$mounted_dir"/*; do
             base_item=$(basename "$item")
             if [ "$base_item" != "SPT" ]; then
-                mv "$item" $spt_dir
+                mv "$item" "$spt_dir"
             fi
         done
     fi
@@ -103,10 +112,10 @@ start_crond() {
 
 create_running_user() {
     echo "Checking running user/group: $uid:$gid"
-    getent group $gid || groupadd -g $gid spt
-    if [[ ! $(id -un $uid) ]]; then
+    getent group "$gid" >/dev/null || groupadd -g "$gid" spt
+    if ! id -u "$uid" >/dev/null 2>&1; then
         echo "User not found, creating user 'spt' with id $uid"
-        useradd --create-home -u $uid -g $gid spt
+        useradd --create-home -u "$uid" -g "$gid" spt
     fi
 }
 
@@ -123,7 +132,7 @@ validate() {
     fi
 
     # Must mount /opt/server directory, otherwise the serverfiles are in container and there's no persistence
-    if [[ ! $(mount | grep $mounted_dir) ]]; then
+    if ! is_server_dir_mounted; then
         echo "Please mount a volume/directory from the host to $mounted_dir. This server container must store files on the host."
         echo "You can do this with docker run's -v flag e.g. '-v /path/on/host:/opt/server'"
         echo "or with docker-compose's 'volumes' directive"
@@ -134,8 +143,8 @@ validate() {
     # If we have sptVersion in the core config, this means this existing server <= SPT v3
     # If existing SPT major version is less than 4, existing files are not compatible
     echo "Validating SPT version"
-    if [[ -d $nodejs_spt_data_dir && -f $spt_nodejs_core_config ]]; then
-        existing_spt_version=$(jq -r '.sptVersion' $spt_nodejs_core_config)
+    if [[ -d "$nodejs_spt_data_dir" && -f "$spt_nodejs_core_config" ]]; then
+        existing_spt_version=$(jq -r '.sptVersion' "$spt_nodejs_core_config")
         if [[ $existing_spt_version != "null" && $existing_spt_version != "$spt_version" ]]; then
             echo "  ==================="
             echo "  === FATAL ERROR ==="
@@ -152,14 +161,22 @@ validate() {
 
     enforce_spt_4_structure
 
-    if [[ -d $spt_data_dir ]]; then
+    if [[ -d "$spt_data_dir" ]]; then
         # Grab version from binary using exiftool
-        existing_spt_version=$(exiftool -s -s -s -ProductVersion $spt_dir/SPT.Server.dll | cut -d '-' -f 1)
+        if [[ ! -f "$spt_dir/SPT.Server.dll" ]]; then
+            echo "WARNING: SPT.Server.dll not found at $spt_dir/SPT.Server.dll; skipping SPT version validation"
+            existing_spt_version=""
+        else
+            existing_spt_version=$(exiftool -s -s -s -ProductVersion "$spt_dir/SPT.Server.dll" 2>/dev/null | cut -d '-' -f 1 || true)
+            if [[ -z "$existing_spt_version" ]]; then
+                echo "WARNING: Could not read ProductVersion from SPT.Server.dll; skipping SPT version validation"
+            fi
+        fi
         if [[ -n ${force_spt_version} ]]; then
             # Force download SPT archive and install, do not backup or validate
             install_spt
-        elif [[ $existing_spt_version != "$spt_version" ]]; then
-            try_update_spt $existing_spt_version
+        elif [[ -n "$existing_spt_version" && "$existing_spt_version" != "$spt_version" ]]; then
+            try_update_spt "$existing_spt_version"
         fi
 
         # Validate fika version based on FIKA_MODE
@@ -177,7 +194,7 @@ validate() {
                     echo "         Skipping Fika version validation this boot (network/API issue?)."
                 else
                     if [[ -f $fika_mod_dir/FikaServer.dll ]]; then
-                        fika_local_SHA=$(exiftool -s -s -s -ProductVersion $fika_mod_dir/FikaServer.dll | grep -oP '[0-9.]+\+\K.*' || true)
+                        fika_local_SHA=$(exiftool -s -s -s -ProductVersion "$fika_mod_dir/FikaServer.dll" 2>/dev/null | grep -oP '[0-9.]+\+\K.*' || true)
                     fi
                     if [[ "$fika_local_SHA" != "$fika_remote_SHA" ]]; then
                         echo "Fika SHA mismatch: found:$fika_local_SHA != expected:$fika_remote_SHA"
@@ -204,16 +221,21 @@ validate() {
 }
 
 make_and_own_spt_dirs() {
-    mkdir -p $spt_dir/user/mods
-    mkdir -p $spt_dir/user/profiles
+    mkdir -p "$spt_dir/user/mods"
+    mkdir -p "$spt_dir/user/profiles"
     change_owner
     set_permissions
 }
 
 change_owner() {
     if [[ "$take_ownership" == "true" ]]; then
+        # Skip full recursive chown when everything is already owned correctly
+        if ! find "$mounted_dir" -xdev \( ! -user "$uid" -o ! -group "$gid" \) -print -quit 2>/dev/null | grep -q .; then
+            echo "Ownership already ${uid}:${gid}, skipping chown"
+            return 0
+        fi
         echo "Changing owner of serverfiles to $uid:$gid"
-        chown -R ${uid}:${gid} $mounted_dir
+        chown -R "${uid}:${gid}" "$mounted_dir"
     fi
 }
 
@@ -222,7 +244,7 @@ set_permissions() {
         echo "Changing permissions of server files to user+rwx, group+rwx, others+rx"
         # owner(u), (g)roup, (o)ther
         # (r)ead, (w)rite, e(x)ecute
-        chmod -R u+rwx,g+rwx,o+rx $mounted_dir
+        chmod -R u+rwx,g+rwx,o+rx "$mounted_dir"
     fi
 }
 
@@ -230,7 +252,7 @@ set_timezone() {
     # If the TZ environment variable has been set, use it
     if [[ ! -z "${TZ}" ]]; then
         # Update the /etc/timezone to the specified time zone
-        echo $TZ > /etc/timezone
+        echo "$TZ" > /etc/timezone
     else
         # Grab the hour from the date command to compare against later
         before_date_hour=$(date +"%H")
@@ -240,7 +262,7 @@ set_timezone() {
     fi
 
     # Force update the symlink
-    ln -sf /usr/share/zoneinfo/$TZ /etc/localtime
+    ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime
 
     # If there was actually a change in the timezone or TZ was specified (accounted for here when before_date_hour is not set above)
     if [[ $before_date_hour != $(date +"%H") ]]; then
@@ -254,38 +276,55 @@ set_timezone() {
 install_fika_mod() {
     echo "Installing Fika servermod version $fika_version"
     # Assumes fika_server.zip artifact contains user/mods/fika-server
-    curl -sL $fika_release_url -O
-    unzip -q $fika_artifact -d $mounted_dir/temp_fika/
-    mv $mounted_dir/temp_fika/SPT/user/mods/fika-server $spt_dir/user/mods/
-    rm -r $mounted_dir/temp_fika
-    rm $fika_artifact
+    local tmpzip="/tmp/$fika_artifact"
+    if ! curl -fSL --connect-timeout 10 --max-time 300 "$fika_release_url" -o "$tmpzip"; then
+        echo "ERROR: Failed to download Fika from $fika_release_url"
+        exit 1
+    fi
+    rm -rf "$mounted_dir/temp_fika"
+    mkdir -p "$mounted_dir/temp_fika"
+    if ! unzip -q "$tmpzip" -d "$mounted_dir/temp_fika/"; then
+        echo "ERROR: Failed to extract Fika archive $fika_artifact"
+        rm -f "$tmpzip"
+        rm -rf "$mounted_dir/temp_fika"
+        exit 1
+    fi
+    if [[ ! -d "$mounted_dir/temp_fika/SPT/user/mods/fika-server" ]]; then
+        echo "ERROR: Fika archive did not contain SPT/user/mods/fika-server"
+        rm -f "$tmpzip"
+        rm -rf "$mounted_dir/temp_fika"
+        exit 1
+    fi
+    mv "$mounted_dir/temp_fika/SPT/user/mods/fika-server" "$spt_dir/user/mods/"
+    rm -rf "$mounted_dir/temp_fika"
+    rm -f "$tmpzip"
     echo "Installation complete"
 }
 
 backup_fika() {
-    mkdir -p $fika_backup_dir
-    cp -r $fika_mod_dir $fika_backup_dir
+    mkdir -p "$fika_backup_dir"
+    cp -r "$fika_mod_dir" "$fika_backup_dir"
 }
 
 try_update_fika() {
     echo "Updating Fika servermod in place to $fika_version"
     # Backup entire fika servermod, then delete and update servermod
     backup_fika
-    rm -r $fika_mod_dir
+    rm -r "$fika_mod_dir"
     install_fika_mod
     # restore config
-    mkdir -p $fika_mod_dir/assets/configs
-    existing_fika_config=$fika_backup_dir/fika-server/$fika_config_path
-    if [[ -f $existing_fika_config ]]; then
-        cp $existing_fika_config $fika_mod_dir/$fika_config_path
+    mkdir -p "$fika_mod_dir/assets/configs"
+    existing_fika_config="$fika_backup_dir/fika-server/$fika_config_path"
+    if [[ -f "$existing_fika_config" ]]; then
+        cp "$existing_fika_config" "$fika_mod_dir/$fika_config_path"
     fi
     echo "Successfully updated Fika to $fika_version"
 }
 
 set_num_headless_profiles() {
-    if [[ ${num_headless_profiles:+1} && -f $fika_mod_dir/$fika_config_path ]]; then
+    if [[ ${num_headless_profiles:+1} && -f "$fika_mod_dir/$fika_config_path" ]]; then
         echo "Setting number of headless profiles to $num_headless_profiles"
-        modified_fika_jsonc="$(jq --arg jq_num_headless_profiles $num_headless_profiles '.headless.profiles.amount=($jq_num_headless_profiles | tonumber)' $fika_mod_dir/$fika_config_path)" && echo -E "${modified_fika_jsonc}" > $fika_mod_dir/$fika_config_path
+        modified_fika_jsonc="$(jq --arg jq_num_headless_profiles "$num_headless_profiles" '.headless.profiles.amount=($jq_num_headless_profiles | tonumber)' "$fika_mod_dir/$fika_config_path")" && echo -E "${modified_fika_jsonc}" > "$fika_mod_dir/$fika_config_path"
     fi
 }
 
@@ -300,30 +339,39 @@ install_spt() {
         echo "!! Forcing SPT version to $force_spt_version     !!"
         echo "!! SPT auto-update is disabled                    !!"
         echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-        cd ${mounted_dir}
+        cd "${mounted_dir}"
         # check if archive already exists, and extract if so
         if [[ ! -f ${forced_spt_version_archive} ]]; then
             echo "Downloading https://spt-releases.modd.in/SPT-${force_spt_version}.7z"
-            curl -sL "https://spt-releases.modd.in/SPT-${force_spt_version}.7z" -o ${forced_spt_version_archive}
+            if ! curl -fSL --connect-timeout 10 --max-time 600 \
+                "https://spt-releases.modd.in/SPT-${force_spt_version}.7z" \
+                -o "${forced_spt_version_archive}"; then
+                echo "ERROR: Failed to download SPT-${force_spt_version}.7z"
+                rm -f "${forced_spt_version_archive}"
+                exit 1
+            fi
             # Remove the server files, since databases tend to be different between versions
-            rm -rf $spt_data_dir
-            7zz x ${forced_spt_version_archive} -aoa
+            rm -rf "$spt_data_dir"
+            if ! 7zz x "${forced_spt_version_archive}" -aoa; then
+                echo "ERROR: Failed to extract ${forced_spt_version_archive}"
+                exit 1
+            fi
         else
             echo "Version already downloaded and presumed installed. Skipping SPT installation."
             echo "If you want to force reinstall this server version ${force_spt_version}, remove the SPT-*.7z archive in your mounted server files directory."
         fi
     else
         # Remove the server files, since databases tend to be different between versions
-        rm -rf $spt_data_dir
-        cp -r $build_dir/* $mounted_dir
+        rm -rf "$spt_data_dir"
+        cp -r "$build_dir"/* "$mounted_dir"
     fi
     make_and_own_spt_dirs
 }
 
 # TODO Anticipate BepInEx too, for Corter-ModSync
 backup_spt_user_dirs() {
-    mkdir -p $spt_backup_dir
-    cp -r $spt_dir/user $spt_backup_dir/
+    mkdir -p "$spt_backup_dir"
+    cp -r "$spt_dir/user" "$spt_backup_dir/"
 }
 
 try_update_spt() {
@@ -345,7 +393,7 @@ try_update_spt() {
     echo ""
     echo "  The user/ folder has been backed up to $spt_backup_dir, but otherwise has been LEFT UNTOUCHED in the server dir."
     echo "  Please verify your existing mods and profile work with this new SPT version! You may want to delete the mods directory and start from scratch"
-    echo "  Restart this container to bring the server back up"
+    echo "  Exiting so Docker can restart the container (use restart: unless-stopped) or start it again manually to bring the server back up."
     echo ""
     echo "  ==============="
     exit 0
@@ -354,11 +402,11 @@ try_update_spt() {
 spt_listen_on_all_networks() {
     # Changes the ip and backendIp to 0.0.0.0 so that the server will listen on all network interfaces.
     http_json=$spt_data_dir/configs/http.json
-    modified_http_json="$(jq '.ip = "0.0.0.0" | .backendIp = "0.0.0.0"' $http_json)" && echo -E "${modified_http_json}" > $http_json
+    modified_http_json="$(jq '.ip = "0.0.0.0" | .backendIp = "0.0.0.0"' "$http_json")" && echo -E "${modified_http_json}" > "$http_json"
     # If fika server config exists, modify that too
     if [[ -f "$fika_mod_dir/$fika_config_path" ]]; then
         echo "Setting listen all networks in Fika SPT config override"
-        modified_fika_jsonc="$(jq '.server.SPT.http.ip = "0.0.0.0" | .server.SPT.http.backendIp = "0.0.0.0"' $fika_mod_dir/$fika_config_path)" && echo -E "${modified_fika_jsonc}" > $fika_mod_dir/$fika_config_path
+        modified_fika_jsonc="$(jq '.server.SPT.http.ip = "0.0.0.0" | .server.SPT.http.backendIp = "0.0.0.0"' "$fika_mod_dir/$fika_config_path")" && echo -E "${modified_fika_jsonc}" > "$fika_mod_dir/$fika_config_path"
     fi
 }
 
@@ -369,7 +417,7 @@ spt_listen_on_all_networks() {
 install_requested_mods() {
     # Run the download & install mods script
     echo "Downloading and installing other mods"
-    /usr/bin/download_unzip_install_mods $spt_dir
+    /usr/bin/download_unzip_install_mods "$spt_dir"
 }
 
 ##############
@@ -436,4 +484,4 @@ set_permissions
 
 set_timezone
 
-su - $(id -nu $uid) -c "cd $spt_dir && ./$spt_binary"
+su - "$(id -nu "$uid")" -c "cd \"$spt_dir\" && ./$spt_binary"

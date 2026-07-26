@@ -79,6 +79,7 @@ Minimal usage
 services:
   fika-server:
     image: ghcr.io/zhliau/fika-spt-server-docker:latest
+    restart: unless-stopped
     environment:
       - FIKA_MODE=install
       # This will automatically set SPT server's configs to work in a containerized environment
@@ -272,7 +273,7 @@ None of these env vars are required, but they may be useful.
 | ~~`AUTO_UPDATE_FIKA`~~    | false   | **DEPRECATED:** Use `FIKA_MODE=auto-update` instead                                                                                                                                                                                       |
 | `TAKE_OWNERSHIP`          | true    | If this is set to false, the container will not change file ownership of the server files. Make sure the running user has permissions to access these files                                                                               |
 | `CHANGE_PERMISSIONS`      | true    | If this is set to false, the container will not change file permissions of the server files. Make sure the running user has permissions to access these files                                                                             |
-| `ENABLE_PROFILE_BACKUP`   | true    | If this is set to false, the cron job that handles profile backups will not be enabled                                                                                                                                                    |
+| `ENABLE_PROFILE_BACKUP`   | true    | If this is set to false, the cron job that handles profile backups will not be enabled. `ENABLE_PROFILE_BACKUPS` (plural) is accepted as an alias                                                                                         |
 | `LISTEN_ALL_NETWORKS`     | false   | If you want to automatically set the SPT server IP addresses to allow it to listen on all network interfaces                                                                                                                              |
 | `TZ`                      | null    | Set the desired time zone. See the `Timezone` section above for details                                                                                                                                                                   |
 | `NUM_HEADLESS_PROFILES`   | null    | Set the desired number of headless profiles for the Fika server to auto-generate. This must be an integer. This will only work if the `fika.jsonc` config file exists, the server automatically generates one on startup if it is missing |
